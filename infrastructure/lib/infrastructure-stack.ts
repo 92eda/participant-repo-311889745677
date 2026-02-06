@@ -16,6 +16,34 @@ export class InfrastructureStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // DynamoDB Table for Users
+    const usersTable = new dynamodb.Table(this, 'UsersTable', {
+      partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // DynamoDB Table for Registrations
+    const registrationsTable = new dynamodb.Table(this, 'RegistrationsTable', {
+      partitionKey: { name: 'registrationId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // Add GSI for querying registrations by userId
+    registrationsTable.addGlobalSecondaryIndex({
+      indexName: 'UserRegistrationsIndex',
+      partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'registeredAt', type: dynamodb.AttributeType.STRING },
+    });
+
+    // Add GSI for querying registrations by eventId
+    registrationsTable.addGlobalSecondaryIndex({
+      indexName: 'EventRegistrationsIndex',
+      partitionKey: { name: 'eventId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'statusRegisteredAt', type: dynamodb.AttributeType.STRING },
+    });
+
     // Lambda Function
     const apiLambda = new lambda.Function(this, 'EventApiFunction', {
       runtime: lambda.Runtime.PYTHON_3_12,
@@ -31,12 +59,16 @@ export class InfrastructureStack extends cdk.Stack {
       }),
       environment: {
         DYNAMODB_TABLE: eventsTable.tableName,
+        USERS_TABLE: usersTable.tableName,
+        REGISTRATIONS_TABLE: registrationsTable.tableName,
       },
       timeout: cdk.Duration.seconds(30),
     });
 
     // Grant Lambda permissions to access DynamoDB
     eventsTable.grantReadWriteData(apiLambda);
+    usersTable.grantReadWriteData(apiLambda);
+    registrationsTable.grantReadWriteData(apiLambda);
 
     // API Gateway
     const api = new apigateway.RestApi(this, 'EventApi', {
