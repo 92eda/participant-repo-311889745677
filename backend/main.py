@@ -1,3 +1,14 @@
+"""
+Event Management API
+
+A FastAPI-based REST API for managing events with DynamoDB storage.
+This module provides CRUD operations for events with proper validation,
+error handling, and CORS support.
+
+The API is designed to run on AWS Lambda using the Mangum ASGI adapter
+and stores data in Amazon DynamoDB.
+"""
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -28,6 +39,19 @@ table = dynamodb.Table(table_name)
 
 # Pydantic models
 class Event(BaseModel):
+    """
+    Event model for creating and storing events.
+    
+    Attributes:
+        eventId: Unique identifier for the event (optional, auto-generated if not provided)
+        title: Event title (1-200 characters)
+        description: Detailed description of the event
+        date: Event date in ISO format
+        location: Event location
+        capacity: Maximum number of attendees (positive integer)
+        organizer: Name of the event organizer
+        status: Event status (defaults to "draft")
+    """
     eventId: Optional[str] = None
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=1)
@@ -41,6 +65,20 @@ class Event(BaseModel):
         extra = "allow"  # Allow extra fields
 
 class EventUpdate(BaseModel):
+    """
+    Event update model for partial updates.
+    
+    All fields are optional to allow partial updates.
+    
+    Attributes:
+        title: Updated event title (1-200 characters)
+        description: Updated event description
+        date: Updated event date in ISO format
+        location: Updated event location
+        capacity: Updated maximum number of attendees (positive integer)
+        organizer: Updated event organizer name
+        status: Updated event status
+    """
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = Field(None, min_length=1)
     date: Optional[str] = None
@@ -54,14 +92,38 @@ class EventUpdate(BaseModel):
 
 @app.get("/")
 async def root():
+    """
+    Root endpoint that returns a welcome message.
+    
+    Returns:
+        dict: Welcome message with API information
+    """
     return {"message": "Event Management API", "version": "1.0.0"}
 
 @app.get("/health")
 async def health_check():
+    """
+    Health check endpoint to verify API status.
+    
+    Returns:
+        dict: Health status information
+    """
     return {"status": "healthy", "message": "API is running"}
 
 @app.post("/events", status_code=201)
 async def create_event(event: Event):
+    """
+    Create a new event.
+    
+    Args:
+        event (Event): Event data to create
+        
+    Returns:
+        dict: Created event data with generated or provided eventId
+        
+    Raises:
+        HTTPException: 500 if creation fails
+    """
     try:
         # Use provided eventId or generate new one
         event_id = event.eventId if event.eventId else str(uuid.uuid4())
@@ -79,6 +141,18 @@ async def create_event(event: Event):
 
 @app.get("/events")
 async def list_events(status: Optional[str] = None):
+    """
+    List all events or filter by status.
+    
+    Args:
+        status (Optional[str]): Filter events by status (active, draft, cancelled)
+        
+    Returns:
+        dict: Dictionary containing list of events
+        
+    Raises:
+        HTTPException: 500 if listing fails
+    """
     try:
         response = table.scan()
         events = response.get('Items', [])
@@ -93,6 +167,18 @@ async def list_events(status: Optional[str] = None):
 
 @app.get("/events/{event_id}")
 async def get_event(event_id: str):
+    """
+    Retrieve a specific event by ID.
+    
+    Args:
+        event_id (str): Unique identifier of the event
+        
+    Returns:
+        dict: Event data
+        
+    Raises:
+        HTTPException: 404 if event not found, 500 if retrieval fails
+    """
     try:
         response = table.get_item(Key={'eventId': event_id})
         if 'Item' not in response:
@@ -105,6 +191,19 @@ async def get_event(event_id: str):
 
 @app.put("/events/{event_id}")
 async def update_event(event_id: str, event_update: EventUpdate):
+    """
+    Update an existing event.
+    
+    Args:
+        event_id (str): Unique identifier of the event to update
+        event_update (EventUpdate): Fields to update
+        
+    Returns:
+        dict: Updated event data
+        
+    Raises:
+        HTTPException: 404 if event not found, 400 if no fields to update, 500 if update fails
+    """
     try:
         # Check if event exists
         response = table.get_item(Key={'eventId': event_id})
@@ -140,6 +239,18 @@ async def update_event(event_id: str, event_update: EventUpdate):
 
 @app.delete("/events/{event_id}", status_code=204)
 async def delete_event(event_id: str):
+    """
+    Delete an event.
+    
+    Args:
+        event_id (str): Unique identifier of the event to delete
+        
+    Returns:
+        None: 204 No Content status
+        
+    Raises:
+        HTTPException: 404 if event not found, 500 if deletion fails
+    """
     try:
         # Check if event exists
         response = table.get_item(Key={'eventId': event_id})
