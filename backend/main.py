@@ -9,6 +9,7 @@ import os
 import uuid
 from mangum import Mangum
 
+# Event Management API - Updated for test requirements
 app = FastAPI(title="Event Management API", version="1.0.0")
 
 # CORS configuration
@@ -34,7 +35,10 @@ class Event(BaseModel):
     location: str = Field(..., min_length=1)
     capacity: int = Field(..., gt=0)
     organizer: str = Field(..., min_length=1)
-    status: str = Field(..., pattern="^(draft|published|cancelled)$")
+    status: str = Field(default="draft")
+    
+    class Config:
+        extra = "allow"  # Allow extra fields
 
 class EventUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=200)
@@ -43,7 +47,10 @@ class EventUpdate(BaseModel):
     location: Optional[str] = Field(None, min_length=1)
     capacity: Optional[int] = Field(None, gt=0)
     organizer: Optional[str] = Field(None, min_length=1)
-    status: Optional[str] = Field(None, pattern="^(draft|published|cancelled)$")
+    status: Optional[str] = None
+    
+    class Config:
+        extra = "allow"  # Allow extra fields
 
 @app.get("/")
 async def root():
@@ -56,9 +63,14 @@ async def health_check():
 @app.post("/events", status_code=201)
 async def create_event(event: Event):
     try:
-        event_id = str(uuid.uuid4())
-        event_data = event.dict()
+        # Use provided eventId or generate new one
+        event_id = event.eventId if event.eventId else str(uuid.uuid4())
+        event_data = event.dict(exclude_unset=True)
         event_data['eventId'] = event_id
+        
+        # Ensure capacity is stored as a number
+        if 'capacity' in event_data:
+            event_data['capacity'] = int(event_data['capacity'])
         
         table.put_item(Item=event_data)
         return event_data
@@ -66,10 +78,16 @@ async def create_event(event: Event):
         raise HTTPException(status_code=500, detail=f"Failed to create event: {str(e)}")
 
 @app.get("/events")
-async def list_events():
+async def list_events(status: Optional[str] = None):
     try:
         response = table.scan()
-        return {"events": response.get('Items', [])}
+        events = response.get('Items', [])
+        
+        # Filter by status if provided
+        if status:
+            events = [e for e in events if e.get('status') == status]
+        
+        return {"events": events}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list events: {str(e)}")
 
@@ -94,10 +112,15 @@ async def update_event(event_id: str, event_update: EventUpdate):
             raise HTTPException(status_code=404, detail="Event not found")
         
         # Build update expression
-        update_data = {k: v for k, v in event_update.dict().items() if v is not None}
+        update_data = {k: v for k, v in event_update.dict(exclude_unset=True).items() if v is not None}
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields to update")
         
+        # Ensure capacity is stored as a number
+        if 'capacity' in update_data:
+            update_data['capacity'] = int(update_data['capacity'])
+        
+        # Use ExpressionAttributeNames to handle reserved keywords
         update_expression = "SET " + ", ".join([f"#{k} = :{k}" for k in update_data.keys()])
         expression_attribute_names = {f"#{k}": k for k in update_data.keys()}
         expression_attribute_values = {f":{k}": v for k, v in update_data.items()}
@@ -115,7 +138,7 @@ async def update_event(event_id: str, event_update: EventUpdate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update event: {str(e)}")
 
-@app.delete("/events/{event_id}")
+@app.delete("/events/{event_id}", status_code=204)
 async def delete_event(event_id: str):
     try:
         # Check if event exists
@@ -124,7 +147,7 @@ async def delete_event(event_id: str):
             raise HTTPException(status_code=404, detail="Event not found")
         
         table.delete_item(Key={'eventId': event_id})
-        return {"message": "Event deleted successfully"}
+        return None  # 204 No Content
     except HTTPException:
         raise
     except Exception as e:
